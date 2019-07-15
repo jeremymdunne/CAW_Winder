@@ -63,12 +63,12 @@ class WrapSettings(QWidget):
         self.table.setColumnCount(3)
         self.table_items = []
         self.table_items.append(QTableWidgetItem)
-        self.horizontal_headers = ['Layers','Winding Angle','Feedrate']
+        self.horizontal_headers = ['Layers','Winding Angle','RPM']
         self.table.setHorizontalHeaderLabels(self.horizontal_headers)
         self.table.resizeColumnsToContents()
         self.table.resizeRowsToContents()
         self.addRowToTable()
-        self.addRowToTable()
+        #self.addRowToTable()
 
 
     def addRowToTable(self):
@@ -77,7 +77,7 @@ class WrapSettings(QWidget):
         layer.setValidator(QIntValidator(1,100))
         windingAngle = QLineEdit("45")
         windingAngle.setValidator(QIntValidator(1,89))
-        feedrate = QLineEdit("2000")
+        feedrate = QLineEdit("20")
         feedrate.setValidator(QIntValidator(1,20000))
         self.table.setCellWidget(self.table.rowCount() - 1, 0, layer)
         self.table.setCellWidget(self.table.rowCount() - 1, 1, windingAngle)

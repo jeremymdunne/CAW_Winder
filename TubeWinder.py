@@ -37,10 +37,11 @@ class TubeWinder:
     def calculate_step_units_and_feedrates(self):
         # first do x steps just to make sure everything's in place correctly
         # default x steps per mm is 142.782152231 steps/mm
-        self.x_steps_per_mm = 142.782152231
-        self.max_x_feedrate = 6000 # this was found through experimentation
+        self.x_steps_per_mm = 142.782152231 / 16.0
+        self.max_x_feedrate = 22500 # this was found through experimentation
         self.file.write("M92 X" + str(round(self.x_steps_per_mm,4)) + "\n")
         self.file.write("M203 X" + str(int(self.max_x_feedrate/60)) + "\n")
+        self.file.write("M201 X900\n")
         # then y steps
         # default y steps per mm is 203.937007874
         self.y_steps_per_mm = 203.937007874
@@ -61,7 +62,7 @@ class TubeWinder:
         self.z_circumference = 40 * .2 * 25.4
         self.z_steps_per_mm = z_steps_per_rotation / self.z_circumference
         #self.file.write("M92 E" + str(self.z_steps_per_mm) + "\n")
-        self.max_z_feedrate = 6000 # this was found through experimentation
+        self.max_z_feedrate = 9000 # this was found through experimentation
         #self.file.write("M203 Z" + str(self.max_z_feedrate/60) + "\n")
         print("Z steps per mm: " + str(round(self.z_steps_per_mm,2)))
         print("Z steps per deg: " +str(round(self.z_steps_per_deg,2)))
@@ -71,17 +72,18 @@ class TubeWinder:
         # feedrate calculation is done from a max rpm to an equivelant mm/m
         # default e steps per degree is 60.4444444444 steps/deg
         # do an rpm conversion and set it to steps per mm of radial travel
-        self.e_steps_per_rotation = 60.444444444 * 360
+        self.e_steps_per_rotation = 60.444444444 * 360 / 16.0
         self.e_circumference = self.diameter * 3.14159
         self.e_steps_per_mm = self.e_steps_per_rotation / self.e_circumference
         # write this to the controller
         self.file.write("M92 E" + str(round(self.e_steps_per_mm,4)) + "\n")
         print("E Steps per mm: " + str(round(self.e_steps_per_mm,4)))
-        # go and set an appropriate max feedrate in rpm in equiv mm/m
-        default_max_rpm = 45
+        # go and set an appropriate max feedrate in rpm in equiv mm/s
+        default_max_rpm = 60
         self.max_e_feedrate = (default_max_rpm * self.diameter * 3.14159)
         # convert to mm/s and tell the device
         self.file.write("M203 E" + str(int(self.max_e_feedrate/60)) + "\n")
+        self.file.write("M201 E01500\n")
         print("Max e feedrate: " + str(int(self.max_e_feedrate)))
         print("Max e feedrate/s: " + str(round(self.max_e_feedrate/60)))
         # go and limit the feedrate of everything based on the e axis
@@ -144,7 +146,7 @@ class TubeWinder:
         @param extension_dist: distance to extend behind the holder when starting and finishing a pass. This helps ensure the filament catches
             on the holders
     """
-    def wrap(self, filament_width, filament_overlap_multiplier = 1, wind_angle = 45, layers = 1, feedrate = 1800, extension_dist = 40):
+    def wrap(self, filament_width, filament_overlap_multiplier = 1, wind_angle = 45, layers = 1, wanted_rpm = 20, extension_dist = 40):
         # start the wrapping cycle
         self.file.write("\n\n; Wrap\n")
         # some calculations are necessary
@@ -152,11 +154,13 @@ class TubeWinder:
         self.reset_relative_axis()
         print("Filament Overlap Multiplier: " + str(filament_overlap_multiplier))
         print("Filament Width: " + str(filament_width))
-        effective_filament_width = 1/filament_overlap_multiplier*filament_width/cos(radians(wind_angle))
+        a = tan(radians(90-wind_angle)) * filament_width/filament_overlap_multiplier
+        effective_filament_width = pow(pow(filament_width/filament_overlap_multiplier,2) + pow(a,2),.5)
         print("Width: " + str(effective_filament_width))
         wraps_per_layer = int(self.e_circumference / effective_filament_width + 1.5)
         print("Wraps per Layer: " + str(wraps_per_layer))
         extraTurnDeg = effective_filament_width/self.e_circumference * 360
+        print("Extra turn:" + str(extraTurnDeg))
         # now start the wrap
         # for now, just go over and back
         # have a 'lead in' in which the head turns to follow the path
@@ -168,23 +172,24 @@ class TubeWinder:
         # make sure we're at the start_offset - extension dist
         self.write_move(x = self.start_offset - extension_dist)
         for i in range(wraps_per_layer):
+            self.file.write("M117 Pass " + str(i + 1) + " of " + str(wraps_per_layer) + "\n")
             previous_start_wrap = self.e_loc
-            self.write_move_rel(x = lead_in_dist, e = lead_in_dist * e_per_x, z = -1*(90-wind_angle), feedrate = feedrate)
-            self.write_move_rel(x = linear_move_dist + lead_in_dist, e = (linear_move_dist + lead_in_dist)*e_per_x, feedrate = feedrate)
+            self.write_move_rel(x = lead_in_dist, e = lead_in_dist * e_per_x, z = -1*(90-wind_angle), feedrate = self.determine_feedrate(x = lead_in_dist, e = lead_in_dist * e_per_x, z = -1*(90-wind_angle), rpm = wanted_rpm))
+            self.write_move_rel(x = linear_move_dist + lead_in_dist, e = (linear_move_dist + lead_in_dist)*e_per_x, feedrate = self.determine_feedrate(x = linear_move_dist + lead_in_dist, e = (linear_move_dist + lead_in_dist)*e_per_x,rpm=wanted_rpm))
             # roatate ~ 360 degrees before moving back
             # but we need to rotate over 60 degrees to make sure the filament makes it
-            self.write_move_rel(e = 45*self.e_mm_per_deg)
+            self.write_move_rel(e = 45*self.e_mm_per_deg,feedrate = self.determine_feedrate(e = 45*self.e_mm_per_deg,rpm = wanted_rpm))
             # then move the head over to 0 deg
-            self.write_move(e = self.e_loc + 60*self.e_mm_per_deg, z = 0)
-            self.write_move_rel(e = (240-15) * self.e_mm_per_deg)
+            self.write_move(e = self.e_loc + 60*self.e_mm_per_deg, z = 0,feedrate = self.determine_feedrate(e=60*self.e_mm_per_deg,z = self.z_loc,rpm = wanted_rpm))
+            self.write_move_rel(e = (240-15) * self.e_mm_per_deg, feedrate = self.determine_feedrate(e = (240-15) * self.e_mm_per_deg, rpm = wanted_rpm))
             # then start moving back
-            self.write_move_rel(x = -lead_in_dist, e = lead_in_dist*e_per_x, z = 90-wind_angle, feedrate = feedrate)
-            self.write_move_rel(x = -1 * (linear_move_dist + lead_in_dist), e = (linear_move_dist + lead_in_dist)*e_per_x, feedrate = feedrate)
+            self.write_move_rel(x = -lead_in_dist, e = lead_in_dist*e_per_x, z = 90-wind_angle, feedrate = self.determine_feedrate(x = -lead_in_dist, e = lead_in_dist*e_per_x, z = 90-wind_angle,rpm = wanted_rpm))
+            self.write_move_rel(x = -1 * (linear_move_dist + lead_in_dist), e = (linear_move_dist + lead_in_dist)*e_per_x, feedrate = self.determine_feedrate(x = -1 * (linear_move_dist + lead_in_dist), e = (linear_move_dist + lead_in_dist)*e_per_x,rpm = wanted_rpm))
             # roatate ~ 360 degrees before moving back
             # but we need to rotate over 60 degrees to make sure the filament makes it
-            self.write_move_rel(e = 45*self.e_mm_per_deg)
+            self.write_move_rel(e = 45*self.e_mm_per_deg, feedrate = self.determine_feedrate(e = 45*self.e_mm_per_deg,rpm = wanted_rpm))
             # then move the head over to 0 deg
-            self.write_move(e = self.e_loc + 60*self.e_mm_per_deg, z = 0)
+            self.write_move(e = self.e_loc + 60*self.e_mm_per_deg, z = 0, feedrate = self.determine_feedrate(e = 60*self.e_mm_per_deg, z = self.z_loc,rpm = wanted_rpm))
             # now rotate to the closest previous_start_wrap + extraTurnDeg
             current_e_deg = (self.e_loc / self.e_mm_per_deg) % 360 # get the current 'deg'
             last_e = (previous_start_wrap / self.e_mm_per_deg) % 360 # get the deg we entered on
@@ -194,7 +199,52 @@ class TubeWinder:
                 required_e_delta_deg = required_e_delta_deg + 360
             if(required_e_delta_deg > 360):
                 required_e_delta_deg = required_e_delta_deg - 360
-            self.write_move_rel(e = (required_e_delta_deg + extraTurnDeg) * self.e_mm_per_deg, feedrate = feedrate)
+            self.write_move_rel(e = (required_e_delta_deg) * self.e_mm_per_deg, feedrate = self.determine_feedrate(e = (required_e_delta_deg + extraTurnDeg) * self.e_mm_per_deg, rpm = wanted_rpm))
+
+
+    def determine_feedrate(self, x = None, y = None, z = None, e = None, rpm = None):
+        # so determine the feedrate such that the e axis is the driving feedrate
+        e_feedrate = rpm * self.e_mm_per_deg * 360
+        if x == None and y == None and z == None:
+            return e_feedrate
+        # now, given the external feedrates, increase them to match
+        dist = []
+        total_dist = 0
+        if x is not None:
+            x = abs(x)
+            dist.append(x)
+        if y is not None:
+            y = abs(y)
+            dist.append(y)
+        if z is not None:
+            z = abs(z)
+            dist.append(z)
+        e = abs(e)
+        dist.append(e)
+        for i in dist:
+            total_dist = total_dist + pow(i,2)
+        total_dist = pow(total_dist,1.0/2)
+        #print(total_dist)
+        # now use ratios
+        feedrates = []
+        actual_feedrate = 0
+        if x is not None:
+            feedrates.append(e_feedrate * x / e)
+            #print("X",end="")
+        if y is not None:
+            feedrates.append(e_feedrate * y / e)
+            #print("Y",end="")
+        if z is not None:
+            feedrates.append(e_feedrate * z * self.z_mm_per_deg / e)
+            #print("Z",end="")
+        #print("E")
+        feedrates.append(e_feedrate)
+        for i in feedrates:
+            actual_feedrate = actual_feedrate + pow(i,2)
+            #print("Sub feedrate: " + str(i))
+        actual_feedrate = pow(actual_feedrate, 1.0/2)
+        #print("Feedrate: " + str(actual_feedrate))
+        return actual_feedrate
 
 
     """
@@ -297,6 +347,7 @@ class TubeWinder:
         # now go and write the new units to the z axis
         self.file.write("M92 Z" + str(self.z_steps_per_mm) + " (now write the correct units)" + "\n")
         self.file.write("M203 Z" + str(self.max_z_feedrate/60) + " (set the correct max feedrate)" + "\n")
+        self.file.write("M201 Z900\n")
         # reset the e axis to 0
         self.file.write("G92 E0\n");
 
@@ -359,9 +410,11 @@ class TubeWinder:
         # execute an absolute move with the new absolute coordinates
         self.write_move(act_x, act_y, act_z, act_e, feedrate)
 
+
 def main():
     print("Hello World!")
-    tube = TubeWinding(2.716 * 25.4,18 * 25.4,1 * 25.4,.1 * 25.4,1*25.4,1*25.4,45,.5 * 25.4)
+    #tube = TubeWinding(2.716 * 25.4,18 * 25.4,1 * 25.4,.1 * 25.4,1*25.4,1*25.4,45,.5 * 25.4)
+
 
 
 if __name__ == "__main__":
